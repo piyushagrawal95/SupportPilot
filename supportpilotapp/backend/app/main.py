@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from app.db.pool import pool
+from app.api import tickets
 
 @asynccontextmanager
 async def lifespan(app:FastAPI):
@@ -9,6 +10,7 @@ async def lifespan(app:FastAPI):
     pool.close()
 
 app=FastAPI(title="SupportPilot AI", lifespan=lifespan)
+app.include_router(tickets.router)
 
 @app.get("/health")
 def home():
