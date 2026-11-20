@@ -16,14 +16,14 @@ def create_ticket(body:TicketCreate):
         ticket=conn.execute(
             "insert into tickets (source,customer_ref,use_case) values(%s,%s,%s) returning *",(body.source,body.customer_ref,body.use_case)
         ).fetchone()
-        conn.execute("insert into ticket_events(ticket_id,kind,actor) values(%s, 'ticket_created','system')",(ticket["id"],)),
+        conn.execute("insert into ticket_events(ticket_id,kind,actor) values(%s, 'ticket_created','system')",(ticket["id"],))
 
     return ticket
 
 @router.get("")
 def list_tickets(status:str|None=None):
     with pool.connection() as conn:
-        rows=conn.execute("select * from tickets where (%s::text is nullor status=%s) order by created_at desc limit 1000",(status,status)).fetchall()
+        rows=conn.execute("select * from tickets where (%s::text is null or status=%s) order by created_at desc limit 1000",(status,status)).fetchall()
 
     return rows
 

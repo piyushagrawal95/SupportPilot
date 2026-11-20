@@ -12,3 +12,4 @@ class Decision:
     outcome:Outcome
     rule:str        #kaunsa rule lagega, jaise "REFUND_WINDOW_7_DAYS"
     reason:str      #reason, customer ya staff ko dikhane ke liye
+    amount_cents:int = 0 #kitna refund allowed/suggested hai
