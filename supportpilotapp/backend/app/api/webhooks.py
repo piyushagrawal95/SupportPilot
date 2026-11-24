@@ -19,28 +19,42 @@ def handle_event(conn,event) ->int |None:
         stripe_customer=obj.get("customer")
     elif etype=="charge.dispute.created":
         use_case="dispute"
-        stripe_customer=None        
+        #Dispute me customer nahi hota, charge hota hai. Charge se customer nikalte hai
+        charge=stripe.Charge.retrieve(obj["charge"])
+        stripe_customer=charge.get("customer")       
     else:
         return None
+    stripe_ref=obj.get("id")    #invoice id 
 
     cust=None
     if stripe_customer:
         cust=conn.execute("select id, cloudnotes_user_id from customers where stripe_customer_id=%s",(stripe_customer,)).fetchone()
 
+    #Ek invoice/dispute = ek ticket
     ticket = conn.execute(
-        "insert into tickets (source, customer_ref, stripe_customer_id, customer_id, use_case, status) "
-        "values ('stripe_event', %s, %s, %s, %s, 'needs_human') returning id",
+        "insert into tickets (source, customer_ref, stripe_customer_id, customer_id, use_case, status, stripe_ref) "
+        "values ('stripe_event', %s, %s, %s, %s, 'needs_human', %s) "
+        "on conflict (use_case, stripe_ref) where stripe_ref is not null do nothing returning id",
         (
             str(cust["cloudnotes_user_id"]) if cust else None,
             stripe_customer,
             cust["id"] if cust else None,
             use_case,
+            stripe_ref,
         ),
     ).fetchone()
+    is_new = ticket is not None
+    if not is_new:
+        ticket = conn.execute(
+            "select id from tickets where use_case=%s and stripe_ref=%s",
+            (use_case, stripe_ref),
+        ).fetchone()
 
-    conn.execute("insert into ticket_events (ticket_id,kind,actor,data) values(%s,'stripe_event_received','system',%s)",
-                 (ticket["id"],Jsonb({"event_id":event["id"],"type":etype})),)
-
+    conn.execute(
+        "insert into ticket_events (ticket_id,kind,actor,data) values(%s,'stripe_event_received','system',%s)",
+        (ticket["id"], Jsonb({"event_id": event["id"], "type": etype, "new_ticket": is_new})),
+    )
+    
     return ticket["id"]
 
 def process_event(event,payload:bytes) ->str:

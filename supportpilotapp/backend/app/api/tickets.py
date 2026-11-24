@@ -1,9 +1,10 @@
 from typing import Literal
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from app.core.security import require_internal_key
 from app.db.pool import pool
 
-router=APIRouter(prefix="/tickets",tags=["tickets"])
+router=APIRouter(prefix="/tickets",tags=["tickets"], dependencies=[Depends(require_internal_key)])
 
 class TicketCreate(BaseModel):
     source:Literal["chat","stripe_event"] ="chat"

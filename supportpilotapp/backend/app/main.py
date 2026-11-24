@@ -1,7 +1,11 @@
 from contextlib import asynccontextmanager
+import stripe
 from fastapi import FastAPI, HTTPException
 from app.db.pool import pool
-from app.api import tickets, webhooks
+from app.api import tickets, webhooks,chat
+from app.core.config import settings
+
+stripe.api_key=settings.stripe_secret_key
 
 @asynccontextmanager
 async def lifespan(app:FastAPI):
@@ -12,6 +16,7 @@ async def lifespan(app:FastAPI):
 app=FastAPI(title="SupportPilot AI", lifespan=lifespan)
 app.include_router(tickets.router)
 app.include_router(webhooks.router)
+app.include_router(chat.router)
 
 @app.get("/health")
 def home():
