@@ -32,7 +32,7 @@ export async function apiRequest(endpoint, options = {}) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const errorMsg = data.detail || `Request failed with status ${res.status}`;
+    const errorMsg = Array.isArray(data.detail)?data.detail.map((d)=>d.msg || JSON.stringify(d)).join(";"):(typeof data.detail==="string"?data.detail:`Request failed with status ${res.status}`);
     const err = new Error(errorMsg);
     err.status = res.status;
     err.data = data;
@@ -55,7 +55,7 @@ export const api = {
   getMe: () => apiRequest("/api/auth/me"),
   setAvailability: (availability) => apiRequest("/api/auth/availability", { method: "POST", body: JSON.stringify({ availability }) }),
   forgotPassword: (email) => apiRequest("/api/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
-  resetPassword: (token, password) => apiRequest("/api/auth/reset-password", { method: "POST", body: JSON.stringify({ token, password }) }),
+  resetPassword: (token, password) => apiRequest("/api/auth/reset-password", { method: "POST", body: JSON.stringify({ token, new_password:password }) }),
   heartbeat: () => apiRequest("/api/auth/me").catch(() => null),
 
   // Overview
