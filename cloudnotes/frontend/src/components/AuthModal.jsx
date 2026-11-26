@@ -31,7 +31,7 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login", reco
     } else if (mode === "signup") {
       ({ error } = await supabase.auth.signUp({ email, password }));
       if (!error) {
-        setMsg({ ok: true, text: "Account created successfully! Please check your email to confirm or sign in." });
+        setMsg({ ok: true, text: "If you are new, a new confirmation link has been sent to your email.If you already have an account, please sign in." });
       }
     } else if (mode === "forgot") {
       ({ error } = await supabase.auth.resetPasswordForEmail(email, {
