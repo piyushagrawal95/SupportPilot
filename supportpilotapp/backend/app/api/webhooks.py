@@ -10,6 +10,10 @@ from app.services import emailer
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
+def _jsonb(obj):
+    """UUID aur datetime jaisi cheezein text banake JSON m save krta hai"""
+    return Jsonb(obj,dumps=lambda o:json.dumps(o,default=str))
+
 def handle_event(conn, event) -> int | None:
     """Event ke hisab se ticket banayenge aur automatic actions execute karenge."""
     etype = event["type"]
@@ -161,11 +165,11 @@ def handle_event(conn, event) -> int | None:
         }
         conn.execute(
             "update tickets set ai_understanding = %s, updated_at = now() where id = %s",
-            (Jsonb(evidence_summary), ticket_id),
+            (_jsonb(evidence_summary), ticket_id),
         )
         conn.execute(
             "insert into ticket_events (ticket_id, kind, actor, data) values (%s, 'dispute_evidence_gathered', 'system', %s)",
-            (ticket_id, Jsonb(evidence_summary)),
+            (ticket_id, _jsonb(evidence_summary)),
         )
         conn.execute(
             "insert into messages (ticket_id, sender, content) values (%s, 'ai', %s)",
