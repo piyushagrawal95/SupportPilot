@@ -217,5 +217,10 @@ async def stripe_webhook(request:Request):
     event=json.loads(payload)
 
     # Error aaya to 500 jaayega, Stripe baad me dobara bhejega
-    result = await run_in_threadpool(process_event, event, payload)
-    return {"status": result}
+    try:
+        result=await run_in_threadpool(process_event,event,payload)
+    except Exception as e:
+        import logging,traceback
+        logging.getLogger("uvicorn.error").error("WEBHOOK FAILED:%s\n%s",e,traceback.format_exc())
+        raise HTTPException(status_code=500,detail=f"{type(e).__name__}:{str(e)[:300]}")
+    return {"status":result}
