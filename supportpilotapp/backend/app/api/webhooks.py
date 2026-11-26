@@ -20,8 +20,12 @@ def handle_event(conn, event) -> int | None:
         stripe_customer = obj.get("customer")
     elif etype == "charge.dispute.created":
         use_case = "dispute"
-        charge = stripe.Charge.retrieve(obj["charge"])
-        stripe_customer = charge.get("customer")
+        stripe_customer=None
+        try:
+            charge=stripe.Charge.retrieve(obj["charge"])
+            stripe_customer=charge.to_dict().get("customer")
+        except stripe.StripeError:
+            stripe_customer=None
     else:
         return None
     stripe_ref = obj.get("id")
