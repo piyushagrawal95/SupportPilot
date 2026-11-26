@@ -11,7 +11,7 @@ from datetime import datetime
 from app.domain.decisions import Decision
 from app.domain.duplicates import find_duplicates
 from app.domain.facts import ChargeFacts, CustomerHistory, Limits
-from app.domain.policy import decide_duplicate_refund, decide_refund_request
+from app.domain.policy import decide_cancellation, decide_duplicate_refund, decide_refund_request
 from app.services.understand import Understanding
 
 # Ek message me do cheezein hon to is order me pehli wali pehle hoti hai
@@ -33,7 +33,8 @@ LABEL = {
     "failed_payment_help": "failed payment",
 }
 
-SUPPORTED = ("duplicate_charge", "refund_request")   # abhi sirf ye do automatic hain
+SUPPORTED = ("duplicate_charge", "refund_request", "cancel_subscription")   # Bug 13 fix: cancellation is supported
+
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ class Plan:
 
 
 def plan_refund(intent: str, charges: list[ChargeFacts], history: CustomerHistory,
-                limits: Limits, now: datetime) -> Plan:
+                limits: Limits, now: datetime, wants_immediate: bool = False) -> Plan:
     """Stripe ke facts se kaunsa charge chunna hai, phir policy.py se faisla.
     charges naye-se-purane order me aate hain (stripe_facts.fetch_charge_facts)."""
     if not charges:
@@ -93,5 +94,9 @@ def plan_refund(intent: str, charges: list[ChargeFacts], history: CustomerHistor
     if intent == "refund_request":
         charge = charges[0]                   # sabse naya payment
         return Plan("decide", charge, decide_refund_request(charge, history, limits, now))
+
+    if intent == "cancel_subscription":
+        charge = charges[0]
+        return Plan("decide", charge, decide_cancellation(charge, wants_immediate, history, limits, now))
 
     raise ValueError(f"planner does not handle intent: {intent}")

@@ -3,7 +3,7 @@ from fastapi import Header,HTTPException
 from app.config import settings
 
 async def current_user(authorization:str|None=Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer"):
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401,detail="Missing token")
     token=authorization.removeprefix("Bearer ")
 

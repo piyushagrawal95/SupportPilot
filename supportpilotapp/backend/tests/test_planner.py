@@ -42,8 +42,9 @@ def test_two_requests_first_by_priority_and_second_is_remembered():
     r = route(u(intents=["cancel_subscription", "refund_request"]), 0)
     assert (r.kind, r.intent, r.also) == ("handle", "refund_request", "cancellation")
 
-def test_cancel_is_unsupported_for_now():
-    assert route(u(intents=["cancel_subscription"]), 0).kind == "unsupported"
+def test_cancel_is_now_supported():
+    r = route(u(intents=["cancel_subscription"]), 0)
+    assert (r.kind, r.use_case) == ("handle", "cancellation")
 
 
 # ---------- plan_refund ----------
@@ -66,6 +67,10 @@ def test_refund_request_uses_newest_charge():
     p = plan_refund("refund_request", [ch("new", 60), ch("old", 60 * 24 * 40)], HISTORY, LIMITS, NOW)
     assert p.charge.charge_id == "new" and p.decision.outcome == Outcome.ALLOW
 
+def test_cancellation_plan_works():
+    p = plan_refund("cancel_subscription", [ch("a", 5)], HISTORY, LIMITS, NOW)
+    assert p.kind == "decide" and p.decision.rule == "CANCEL_AT_PERIOD_END"
+
 def test_unknown_intent_raises():
     with pytest.raises(ValueError):
-        plan_refund("cancel_subscription", [ch("a", 5)], HISTORY, LIMITS, NOW)
+        plan_refund("unrecognized_intent_123", [ch("a", 5)], HISTORY, LIMITS, NOW)

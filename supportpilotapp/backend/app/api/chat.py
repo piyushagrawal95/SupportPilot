@@ -33,14 +33,6 @@ def _find_or_create_ticket(conn, user_id: str, ticket_id: int | None):
         if t["status"] not in TERMINAL:
             return t
         # Ticket khatam ho chuka: neeche naya ticket banega
-    else:
-        # Is customer ka chal raha chat ticket (approval/agent ke paas wala bhi) ho to wahi
-        t = conn.execute(
-            "select id, status from tickets where customer_ref=%s and source='chat' "
-            "and status not in ('resolved_by_ai','closed') order by created_at desc limit 1",
-            (user_id,)).fetchone()
-        if t:
-            return t
 
     cust = conn.execute("select id, stripe_customer_id from customers where cloudnotes_user_id=%s::uuid",
                         (user_id,)).fetchone()
@@ -84,7 +76,7 @@ def send_message(body: ChatIn):
                 for w in _words(event["text"]):
                     yield _sse({"type": "token", "text": w})
                     time.sleep(WORD_DELAY)
-                yield _sse({"type": "done", "ticket_status": event["ticket_status"]})
+                yield _sse({"type": "done", "ticket_status": event["ticket_status"], "message_id": event.get("message_id")})
             else:
                 yield _sse(event)      # status events ("Checking your payments…")
 

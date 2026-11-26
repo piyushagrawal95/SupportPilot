@@ -112,8 +112,11 @@ def decide_cancellation(charge, wants_immediate, history, limits, now) -> Decisi
         return _gate_no_money("CANCEL_AT_PERIOD_END", "Plan ends at the end of the current billing period", limits)
 
     if now - charge.created_at > PARTIAL_REFUND_WINDOW:
-        return Decision(Outcome.BLOCK, "IMMEDIATE_CANCEL_WINDOW_EXPIRED",
-                        "Immediate cancellation with a refund is only possible within 30 days of the last payment")
+        return _gate_no_money(
+            "CANCEL_AT_PERIOD_END",
+            "Payment is older than 30 days so immediate refund cannot be issued; subscription cancelled at period end",
+            limits,
+        )
 
     amount = unused_cents(charge, now)
     if amount == 0:

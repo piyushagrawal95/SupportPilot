@@ -36,3 +36,28 @@ def load_history(conn, stripe_customer_id: str) -> CustomerHistory:
         "and stripe_customer_id=%s and completed_at > now() - interval '30 days' limit 1",
         (stripe_customer_id,)).fetchone()
     return CustomerHistory(auto_refund_in_last_30_days=recent is not None)
+
+
+def detect_unusual_activity(conn, stripe_customer_id: str, ticket_id: int | None = None) -> dict | None:
+    """Problem 8: Unusual activity detection (Bug 19 fix).
+    Checks velocity and rapid successive refund requests from same customer.
+    If suspicious velocity detected, returns reason to hold for human review."""
+    # Check if > 3 tickets from this customer in past 24 hours
+    count_24h = conn.execute(
+        "select count(*) as n from tickets where stripe_customer_id = %s and created_at > now() - interval '24 hours'",
+        (stripe_customer_id,),
+    ).fetchone()["n"]
+
+    if count_24h > 3:
+        return {"unusual": True, "reason": f"High ticket velocity: {count_24h} tickets created within 24 hours"}
+
+    # Check if multiple refund actions attempted within 1 hour
+    refund_1h = conn.execute(
+        "select count(*) as n from actions where stripe_customer_id = %s and type = 'refund' and created_at > now() - interval '1 hour'",
+        (stripe_customer_id,),
+    ).fetchone()["n"]
+
+    if refund_1h > 1:
+        return {"unusual": True, "reason": f"Rapid refund requests: {refund_1h} refund actions in the past hour"}
+
+    return None

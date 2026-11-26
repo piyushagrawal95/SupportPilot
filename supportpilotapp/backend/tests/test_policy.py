@@ -160,8 +160,9 @@ def test_immediate_cancel_within_30_days_refunds_unused_part():
 
 
 def test_immediate_cancel_after_30_days_is_blocked():
+    # Customer requested immediate cancel after 30 days: refund blocked, but defaults to cancel at period end
     d = decide_cancellation(charge(40), True, CLEAN_HISTORY, LIMITS, NOW)
-    assert (d.outcome, d.rule) == (Outcome.BLOCK, "IMMEDIATE_CANCEL_WINDOW_EXPIRED")
+    assert (d.outcome, d.rule) == (Outcome.ALLOW, "CANCEL_AT_PERIOD_END")
 
 
 def test_cancel_at_period_end_ignores_the_refund_rules():

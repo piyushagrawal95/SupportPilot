@@ -22,6 +22,15 @@ def needs_approval(amount_cents: int, ticket_id: int, is_duplicate: bool) -> str
             f"Your ticket number is #{ticket_id}. You'll get an update here and by email, "
             "usually within a few hours.")
 
+def cancellation_needs_approval(amount_cents: int, ticket_id: int) -> str:
+    if amount_cents > 0:
+        return (f"Your request to cancel immediately with a prorated refund of {money(amount_cents)} "
+                f"requires approval from our team. Your ticket number is #{ticket_id}. "
+                "You'll get an update here and by email, usually within a few hours.")
+    return (f"Your subscription cancellation request has been scheduled and is awaiting review from our team. "
+            f"Your ticket number is #{ticket_id}. You'll get an update here and by email, "
+            "usually within a few hours.")
+
 #Policy ne mana kia
 _DECLINE_TEXT = {
     "ALREADY_REFUNDED": "That payment has already been fully refunded.",
@@ -62,8 +71,17 @@ def not_automatic_yet(ticket_id: int) -> str:
             "Someone will email you within a few hours.")
 
 
-def ask_question(question: str | None) -> str:
-    return question or "I can help with duplicate charges, refunds and cancellations. What do you need?"
+def ask_question(question: str | None, customer_text: str = "") -> str:
+    if question:
+        return question
+    t = customer_text.lower()
+    if any(k in t for k in ("pro", "feature", "pricing", "plan", "cost", "include", "tier")):
+        return (
+            "CloudNotes Pro ($20/month) includes unlimited cloud notes, instant multi-device synchronization, "
+            "AI-powered semantic search, complete revision history, and priority customer support. "
+            "I can also assist you with billing, duplicate charges, cancellations, or refunds. What would you like help with?"
+        )
+    return "I can help with billing questions, duplicate charges, refunds and cancellations. What do you need?"
 
 
 def held(ticket_status: str, ticket_id: int) -> str:

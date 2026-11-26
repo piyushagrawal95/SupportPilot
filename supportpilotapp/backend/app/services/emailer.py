@@ -21,8 +21,9 @@ def _send_log(to_email: str, subject: str, text: str) -> None:
 def _send_maileroo(to_email: str, subject: str, text: str) -> None:
     if not settings.maileroo_api_key or not settings.email_from:
         raise EmailError("Maileroo is not configured")
+    from_addr = settings.email_from if "@" in settings.email_from else f"support@{settings.email_from}"
     body = {
-        "from": {"address": settings.email_from, "display_name": settings.email_from_name},
+        "from": {"address": from_addr, "display_name": settings.email_from_name},
         "to": [{"address": to_email}],
         "subject": subject,
         "plain": text,

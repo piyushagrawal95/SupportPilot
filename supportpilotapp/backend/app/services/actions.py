@@ -2,8 +2,10 @@ from dataclasses import dataclass
 
 import stripe
 from psycopg.types.json import Jsonb
-
+from app.core.config import settings
 from app.services.stripe_facts import _plain
+
+stripe.api_key = settings.stripe_secret_key
 
 
 @dataclass(frozen=True)
@@ -153,3 +155,88 @@ def execute_refund(pool, *, ticket_id: int, stripe_customer_id: str, charge_id: 
         _finish(conn, action_id, ticket_id, executed_by, "done", stripe_ref=refund["id"],
                 data={"charge_id": charge_id, "amount_cents": amount_cents})
         return ActionResult("done", "Refund completed", refund["id"], amount_cents)
+
+
+def cancel_key(stripe_customer_id: str, mode: str) -> str:
+    return f"cancel:{stripe_customer_id}:{mode}"
+
+
+def execute_cancellation(
+    pool,
+    *,
+    ticket_id: int,
+    stripe_customer_id: str,
+    mode: str = "period_end",
+    refund_amount_cents: int = 0,
+    charge_id: str | None = None,
+    executed_by: str = "ai_auto",
+    approval_id: int | None = None,
+) -> ActionResult:
+    """Executes subscription cancellation with Stripe and logs event (Bug 13 fix).
+    Modes: 'period_end' (cancels at billing period end) or 'immediate' (instant cancel with optional unused refund)."""
+    key = cancel_key(stripe_customer_id, mode)
+
+    with pool.connection() as conn:
+        conn.execute("select pg_advisory_xact_lock(hashtext(%s))", (key,))
+
+        row = conn.execute("select id, status, stripe_ref from actions where idempotency_key=%s", (key,)).fetchone()
+        if row and row["status"] == "done":
+            return ActionResult("already_done", "Subscription was already cancelled", row["stripe_ref"])
+
+        if row:
+            action_id = row["id"]
+        else:
+            action_id = conn.execute(
+                "insert into actions (ticket_id, type, stripe_customer_id, idempotency_key, executed_by, approval_id) "
+                "values (%s, 'cancel_subscription', %s, %s, %s, %s) returning id",
+                (ticket_id, stripe_customer_id, key, executed_by, approval_id),
+            ).fetchone()["id"]
+
+        try:
+            subs = stripe.Subscription.list(customer=stripe_customer_id, status="active", limit=1)
+            if not subs.data:
+                subs = stripe.Subscription.list(customer=stripe_customer_id, limit=1)
+
+            if not subs.data:
+                _finish(conn, action_id, ticket_id, executed_by, "done", data={"note": "No active Stripe subscription"})
+                return ActionResult("done", "No active subscription found to cancel", None)
+
+            sub = subs.data[0]
+            sub_id = sub.id
+
+            if mode == "period_end":
+                updated = _plain(stripe.Subscription.modify(sub_id, cancel_at_period_end=True, idempotency_key=key))
+                _finish(conn, action_id, ticket_id, executed_by, "done", stripe_ref=updated.get("id"), data={"mode": "period_end"})
+                return ActionResult("done", "Subscription set to cancel at end of current billing period", updated.get("id"))
+            else:
+                cancelled = _plain(stripe.Subscription.cancel(sub_id, idempotency_key=key))
+                refund_ref = None
+                refund_res = None
+                if refund_amount_cents > 0 and charge_id:
+                    refund_res = execute_refund(
+                        pool,
+                        ticket_id=ticket_id,
+                        stripe_customer_id=stripe_customer_id,
+                        charge_id=charge_id,
+                        amount_cents=refund_amount_cents,
+                        executed_by=executed_by,
+                        approval_id=approval_id,
+                        use_case="cancellation",
+                    )
+                    refund_ref = refund_res.stripe_ref
+
+                if refund_res and refund_res.status not in ("done", "already_done"):
+                    err_msg = refund_res.reason or refund_res.message
+                    _finish(conn, action_id, ticket_id, executed_by, "failed",
+                            stripe_ref=cancelled.get("id"),
+                            error=f"Subscription cancelled, but refund failed: {err_msg}",
+                            data={"mode": "immediate", "refund_status": "failed", "refund_error": err_msg})
+                    return ActionResult("failed", f"Subscription cancelled, but prorated refund could not be processed: {err_msg}", cancelled.get("id"))
+
+                _finish(conn, action_id, ticket_id, executed_by, "done", stripe_ref=cancelled.get("id"),
+                        data={"mode": "immediate", "refund_cents": refund_amount_cents, "refund_ref": refund_ref})
+                return ActionResult("done", "Subscription cancelled immediately", cancelled.get("id"), refund_amount_cents)
+
+        except stripe.StripeError as e:
+            _finish(conn, action_id, ticket_id, executed_by, "failed", error=str(e))
+            return ActionResult("failed", f"Stripe cancellation failed: {e}")

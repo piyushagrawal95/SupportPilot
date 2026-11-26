@@ -58,3 +58,25 @@ async def send_message(body: ChatIn, user=Depends(current_user)):
 
     return StreamingResponse(relay(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/poll")
+async def poll_messages(ticket_id: int, after_id: int = 0, user=Depends(current_user)):
+    """Fetch live updates and agent messages for the customer's active ticket with ownership verification."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            r = await client.get(
+                f"{settings.supportpilot_url}/api/live/{ticket_id}/messages",
+                params={"after_id": after_id, "customer_ref": str(user["id"])},
+                headers={"X-Internal-Key": settings.supportpilot_key},
+            )
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 403:
+                raise HTTPException(status_code=403, detail="You do not own this ticket")
+            if r.status_code == 404:
+                raise HTTPException(status_code=404, detail="Ticket not found")
+        except httpx.HTTPError:
+            pass
+    return {"ticket_id": ticket_id, "messages": []}
+

@@ -55,3 +55,43 @@ def create_checkout(user=Depends(current_user)):
     
 
     return {"url":session.url}
+
+
+@router.get("/status")
+def get_billing_status(user=Depends(current_user)):
+    """Returns real subscription status from Stripe (Bug 27 fix)."""
+    with pool.connection() as conn:
+        row = conn.execute(
+            "select stripe_customer_id from customers where cloudnotes_user_id = %s::uuid",
+            (user["id"],),
+        ).fetchone()
+
+    if not row or not row["stripe_customer_id"]:
+        return {
+            "subscribed": False,
+            "plan": "Free Tier",
+            "price": "$0 / month",
+            "cancel_at_period_end": False,
+        }
+
+    cust_id = row["stripe_customer_id"]
+    try:
+        subs = stripe.Subscription.list(customer=cust_id, status="active", limit=1)
+        if subs.data:
+            sub = subs.data[0]
+            return {
+                "subscribed": True,
+                "plan": "CloudNotes Pro",
+                "price": "$20 / month",
+                "cancel_at_period_end": sub.cancel_at_period_end,
+                "current_period_end": getattr(sub, "current_period_end", None),
+            }
+    except stripe.StripeError:
+        pass
+
+    return {
+        "subscribed": False,
+        "plan": "Free Tier",
+        "price": "$0 / month",
+        "cancel_at_period_end": False,
+    }

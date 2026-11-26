@@ -1,6 +1,9 @@
 from datetime import datetime,timezone
 import stripe
+from app.core.config import settings
 from app.domain.facts import ChargeFacts
+
+stripe.api_key = settings.stripe_secret_key
 
 class CustomerNotLinked(Exception):
     """Is cloudnotes user ka Stripe customer abhi bana nahi h"""
