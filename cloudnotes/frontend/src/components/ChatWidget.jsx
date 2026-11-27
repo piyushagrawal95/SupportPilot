@@ -39,6 +39,7 @@ export default function ChatWidget({ session }) {
   const [lastMsgId, setLastMsgId] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const endRef = useRef(null);
+  const sendingRef=useRef(false);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -68,11 +69,13 @@ export default function ChatWidget({ session }) {
     let isMounted = true;
     const pollAgentMessages = async () => {
       try {
+        if(sendingRef.current) return;
         const res = await fetch(`${API}/chat/poll?ticket_id=${ticketId}&after_id=${lastMsgId}`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
         if (!res.ok) return;
         const data = await res.json();
+        if(sendingRef.current) return;
         if (!isMounted || !data.messages || data.messages.length === 0) return;
 
         let maxId = lastMsgId;
@@ -159,6 +162,7 @@ export default function ChatWidget({ session }) {
 
     setText("");
     setSending(true);
+    sendingRef.current=true;
     // user ka message + bot ka khali "likh raha hai" message
     setMessages((m) => [...m, { from: "you", text: t }, { from: "bot", text: "", pending: true, note: "Sending…" }]);
 
@@ -203,6 +207,7 @@ export default function ChatWidget({ session }) {
     } catch {
       patchLast(() => ({ from: "bot", text: "Could not reach support. Check your connection and try again." }));
     }
+    sendingRef.current=false;
     setSending(false);
   }
 
