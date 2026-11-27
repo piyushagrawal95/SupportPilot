@@ -4,7 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
-from app.core.security import get_current_staff, require_internal_or_staff, require_roles
+from app.core.security import get_current_staff, require_roles
 from app.db.pool import pool
 from app.services import actions, emailer, replies
 
@@ -149,7 +149,7 @@ def decide_approval(
                         conn.execute("update tickets set status = 'resolved_by_ai', resolved_by = 'ai_after_approval', updated_at = now() where id = %s", (ticket_id,))
                         conn.execute(
                             "insert into ticket_events (ticket_id, kind, actor, data) values (%s, 'approval_approved', %s, %s)",
-                            (ticket_id, f"human:{staff_id}", Jsonb({"reason": body.reason, "mode": mode, "amount_cents": amount_cents})),
+                            (ticket_id, f"human:{staff_id}", Jsonb({"approver_name": staff_name, "reason": body.reason, "mode": mode, "amount_cents": amount_cents})),
                         )
                         conn.commit()
 
@@ -166,7 +166,7 @@ def decide_approval(
                     else:
                         conn.execute(
                             "insert into ticket_events (ticket_id, kind, actor, data) values (%s, 'approval_execution_failed', %s, %s)",
-                            (ticket_id, f"human:{staff_id}", Jsonb({"error": res.reason, "action_type": "cancel_subscription"})),
+                            (ticket_id, f"human:{staff_id}", Jsonb({"approver_name": staff_name, "error": res.reason, "action_type": "cancel_subscription"})),
                         )
                         conn.execute("update tickets set status = 'needs_human', updated_at = now() where id = %s", (ticket_id,))
                         conn.commit()
@@ -200,7 +200,7 @@ def decide_approval(
                         conn.execute("update tickets set status = 'resolved_by_ai', resolved_by = 'ai_after_approval', updated_at = now() where id = %s", (ticket_id,))
                         conn.execute(
                             "insert into ticket_events (ticket_id, kind, actor, data) values (%s, 'approval_approved', %s, %s)",
-                            (ticket_id, f"human:{staff_id}", Jsonb({"reason": body.reason, "amount_cents": amount_cents, "stripe_ref": res.stripe_ref})),
+                            (ticket_id, f"human:{staff_id}", Jsonb({"approver_name": staff_name, "reason": body.reason, "amount_cents": amount_cents, "stripe_ref": res.stripe_ref})),
                         )
                         conn.commit()
 
@@ -218,7 +218,7 @@ def decide_approval(
                         # Execution failed - do not mark rejected to avoid skewing agreement performance
                         conn.execute(
                             "insert into ticket_events (ticket_id, kind, actor, data) values (%s, 'approval_execution_failed', %s, %s)",
-                            (ticket_id, f"human:{staff_id}", Jsonb({"error": res.reason or res.message, "action_type": "refund"})),
+                            (ticket_id, f"human:{staff_id}", Jsonb({"approver_name": staff_name, "error": res.reason or res.message, "action_type": "refund"})),
                         )
                         conn.execute("update tickets set status = 'needs_human', updated_at = now() where id = %s", (ticket_id,))
                         conn.commit()
@@ -242,7 +242,7 @@ def decide_approval(
                 conn.execute("update tickets set status = 'needs_human', updated_at = now() where id = %s", (ticket_id,))
                 conn.execute(
                     "insert into ticket_events (ticket_id, kind, actor, data) values (%s, 'approval_rejected', %s, %s)",
-                    (ticket_id, f"human:{staff_id}", Jsonb({"reason": body.reason})),
+                    (ticket_id, f"human:{staff_id}", Jsonb({"approver_name": staff_name, "reason": body.reason})),
                 )
                 conn.commit()
 

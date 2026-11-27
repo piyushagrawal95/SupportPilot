@@ -1,4 +1,5 @@
 import json
+import logging
 
 import stripe
 from fastapi import APIRouter,HTTPException,Request
@@ -223,8 +224,7 @@ async def stripe_webhook(request:Request):
     # Error aaya to 500 jaayega, Stripe baad me dobara bhejega
     try:
         result=await run_in_threadpool(process_event,event,payload)
-    except Exception as e:
-        import logging,traceback
-        logging.getLogger("uvicorn.error").error("WEBHOOK FAILED")
-        raise HTTPException(status_code=500,detail=f"{type(e).__name__}:{str(e)[:300]}")
+    except Exception:
+        logging.getLogger("uvicorn.error").exception("WEBHOOK FAILED")
+        raise HTTPException(status_code=500, detail="Internal error processing webhook")
     return {"status":result}

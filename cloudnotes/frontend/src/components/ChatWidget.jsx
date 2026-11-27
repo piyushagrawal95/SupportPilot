@@ -39,7 +39,7 @@ export default function ChatWidget({ session }) {
   const [lastMsgId, setLastMsgId] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const endRef = useRef(null);
-  const sendingRef=useRef(false);
+  const sendingRef = useRef(false);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -69,13 +69,13 @@ export default function ChatWidget({ session }) {
     let isMounted = true;
     const pollAgentMessages = async () => {
       try {
-        if(sendingRef.current) return;
+        if (sendingRef.current) return;
         const res = await fetch(`${API}/chat/poll?ticket_id=${ticketId}&after_id=${lastMsgId}`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
         if (!res.ok) return;
         const data = await res.json();
-        if(sendingRef.current) return;
+        if (sendingRef.current) return;
         if (!isMounted || !data.messages || data.messages.length === 0) return;
 
         let maxId = lastMsgId;
@@ -147,24 +147,28 @@ export default function ChatWidget({ session }) {
   }, [ticketId, session, open, lastMsgId]);
 
 
-  // Sirf aakhri message badalta hai (bot ka jawab ek hi bubble me banta jaata hai)
-  const patchLast = (fn) =>
-    setMessages((m) => {
-      const c = m.slice();
-      c[c.length - 1] = fn(c[c.length - 1]);
-      return c;
-    });
-
   async function send(e, overrideText) {
     if (e && e.preventDefault) e.preventDefault();
     const t = (overrideText || text).trim();
-    if (!t || sending || !session) return;
+    // State late update hota hai, isliye double-click / double-Enter ko ref se rokte hain
+    if (!t || sendingRef.current || !session) return;
+    sendingRef.current = true;
 
     setText("");
     setSending(true);
-    sendingRef.current=true;
+
+    // Is jawab ki bubble ki apni id. Do streams ek saath chalein to bhi
+    // sirf apni hi bubble badlengi (pehle "aakhri message" badalta tha -> text mix hota tha)
+    const localId = crypto.randomUUID();
+    const patchBot = (fn) =>
+      setMessages((m) => m.map((x) => (x.localId === localId ? { ...fn(x), localId } : x)));
+
     // user ka message + bot ka khali "likh raha hai" message
-    setMessages((m) => [...m, { from: "you", text: t }, { from: "bot", text: "", pending: true, note: "Sending…" }]);
+    setMessages((m) => [
+      ...m,
+      { from: "you", text: t },
+      { from: "bot", text: "", pending: true, note: "Sending…", localId },
+    ]);
 
     try {
       const res = await fetch(`${API}/chat/message`, {
@@ -178,14 +182,14 @@ export default function ChatWidget({ session }) {
         const msg = res.status === 401
           ? "Your session expired. Please log in again."
           : data.detail || "Something went wrong. Please try again.";
-        patchLast(() => ({ from: "bot", text: msg }));
+        patchBot(() => ({ from: "bot", text: msg }));
       } else {
         await readStream(res, (ev) => {
           if (ev.type === "ticket") setTicketId(ev.ticket_id);
-          else if (ev.type === "status") patchLast((msg) => ({ ...msg, note: ev.text }));
-          else if (ev.type === "token") patchLast((msg) => ({ ...msg, note: null, text: msg.text + ev.text }));
+          else if (ev.type === "status") patchBot((msg) => ({ ...msg, note: ev.text }));
+          else if (ev.type === "token") patchBot((msg) => ({ ...msg, note: null, text: msg.text + ev.text }));
           else if (ev.type === "done") {
-            patchLast((msg) => ({
+            patchBot((msg) => ({
               ...msg,
               id: ev.message_id || msg.id,
               pending: false,
@@ -198,16 +202,16 @@ export default function ChatWidget({ session }) {
           }
         });
         // Stream bina "done" ke khatam hua (network gaya): jhooth nahi, sach bolo
-        patchLast((msg) =>
+        patchBot((msg) =>
           msg.pending
             ? { ...msg, pending: false, note: null,
                 text: msg.text || "I couldn't finish answering. Your message is saved, please try again in a moment." }
             : msg);
       }
     } catch {
-      patchLast(() => ({ from: "bot", text: "Could not reach support. Check your connection and try again." }));
+      patchBot(() => ({ from: "bot", text: "Could not reach support. Check your connection and try again." }));
     }
-    sendingRef.current=false;
+    sendingRef.current = false;
     setSending(false);
   }
 

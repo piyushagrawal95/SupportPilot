@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field

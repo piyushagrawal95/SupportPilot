@@ -70,7 +70,16 @@ export default function App() {
     "Start typing immediately. Sign in to autosave your notes to the cloud, organize with tags, and sync across all devices."
   );
 
-  const initialLoadRef = useRef(true);
+  const notesRef = useRef(notes);
+  const selectedNoteIdRef = useRef(selectedNoteId);
+
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
+
+  useEffect(() => {
+    selectedNoteIdRef.current = selectedNoteId;
+  }, [selectedNoteId]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -131,7 +140,8 @@ export default function App() {
             if (data.plan) setPlanInfo(data.plan);
             if (data.notes?.length > 0) {
               // If currently selected note is not in list or not set, select first note
-              if (!selectedNoteId || !data.notes.some((n) => n.id === selectedNoteId)) {
+              const currentSelectedId = selectedNoteIdRef.current;
+              if (!currentSelectedId || !data.notes.some((n) => n.id === currentSelectedId)) {
                 const first = data.notes[0];
                 setSelectedNoteId(first.id);
                 setEditTitle(first.title);
@@ -172,7 +182,7 @@ export default function App() {
     if (!session || !selectedNoteId) return;
 
     // Check if the content actually changed compared to the selected note in state
-    const currentNote = notes.find((n) => n.id === selectedNoteId);
+    const currentNote = notesRef.current.find((n) => n.id === selectedNoteId);
     if (!currentNote) return;
 
     if (currentNote.title === editTitle && currentNote.body === editBody) {
@@ -286,8 +296,12 @@ export default function App() {
             setSaveStatus("idle");
           }
         }
+      } else {
+        setNotice({ tone: "warn", text: "Could not delete the note." });
       }
-    } catch {}
+    } catch {
+      setNotice({ tone: "warn", text: "Something went wrong. Please try again." });
+    }
   }
 
   // Toggle Pin (Bug 15)
@@ -398,7 +412,9 @@ export default function App() {
         const updated = await res.json();
         setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
       }
-    } catch {}
+    } catch {
+      setNotice({ tone: "warn", text: "Something went wrong. Please try again." });
+    }
   }
 
   // Export Markdown (Bug 15)
@@ -435,7 +451,9 @@ export default function App() {
           });
         }
       }
-    } catch {}
+    } catch {
+      setNotice({ tone: "warn", text: "Something went wrong. Please try again." });
+    }
   }
 
   // AI Note Generator handler
@@ -554,6 +572,10 @@ export default function App() {
   }
 
   async function subscribe() {
+    if (subscription.subscribed) {
+      setAccountOpen(true);
+      return;
+    }
     if (!session) {
       setAuthMode("signup");
       setAuthOpen(true);

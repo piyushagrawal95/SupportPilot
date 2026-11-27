@@ -118,7 +118,13 @@ def get_ticket(ticket_id: int, _: dict = Depends(require_internal_or_staff)):
         ).fetchall()
 
         approvals_list = conn.execute(
-            "select * from approvals where ticket_id = %s order by id asc",
+            """
+            select a.*, su.name as decided_by_name, su.email as decided_by_email
+            from approvals a
+            left join staff_users su on a.decided_by = su.id
+            where a.ticket_id = %s
+            order by a.id asc
+            """,
             (ticket_id,),
         ).fetchall()
 

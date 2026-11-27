@@ -2,12 +2,12 @@ import uuid
 import hashlib
 from typing import Literal
 import stripe
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 from app.core.config import settings as app_settings
 from app.core.security import get_current_staff, require_roles
-from app.api.auth import hash_password
+from app.api.auth import hash_password, validate_password_strength
 from app.db.pool import pool
 from app.services.understand import SYSTEM_PROMPT
 
@@ -138,6 +138,7 @@ def add_team_member(
     body: TeamMemberCreateIn,
     _: dict = Depends(require_roles(["admin"])),
 ):
+    validate_password_strength(body.password)
     with pool.connection() as conn:
         existing = conn.execute("select id from staff_users where lower(email) = lower(%s)", (body.email,)).fetchone()
         if existing:
@@ -174,8 +175,10 @@ def update_team_member(
         updates.append("availability = %s")
         params.append(body.availability)
     if body.password is not None and body.password.strip():
+        pw = body.password.strip()
+        validate_password_strength(pw)
         updates.append("password_hash = %s")
-        params.append(hash_password(body.password.strip()))
+        params.append(hash_password(pw))
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields provided to update")

@@ -5,7 +5,7 @@ import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from app.api.auth import hash_password
+from app.api.auth import hash_password, validate_password_strength
 from app.db.pool import pool
 
 # (naam, email, role)
@@ -22,8 +22,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--password", default="Test@1234")
     args = ap.parse_args()
-    if len(args.password) < 6:
-        sys.exit("Password kam se kam 6 characters ka hona chahiye")
+    try:
+        validate_password_strength(args.password)
+    except Exception:
+        sys.exit("Password kam se kam 8 characters ka hona chahiye with 1 uppercase aur 1 special character")
 
     pool.open()
     try:

@@ -60,10 +60,26 @@ def test_register_admin_allows_bootstrap_when_zero_admins(mocker):
     res = client.post("/api/auth/register-admin", json={
         "name": "Initial Admin",
         "email": "first@cloudnotes.com",
-        "password": "password123",
+        "password": "Password@123",
     })
     assert res.status_code == 200
     assert res.json()["user"]["role"] == "admin"
+
+
+def test_password_strength_policy():
+    from fastapi import HTTPException
+    import pytest
+    from app.api.auth import validate_password_strength
+
+    # Valid passwords
+    validate_password_strength("Test@1234")
+    validate_password_strength("Strong!Pass")
+
+    # Invalid passwords (too short, missing uppercase, missing special char)
+    for bad in ("Short@1", "lowercase@123", "NoSpecial123"):
+        with pytest.raises(HTTPException) as exc:
+            validate_password_strength(bad)
+        assert exc.value.status_code == 400
 
 
 # ----------------- Bug 3: ActionResult .reason & .message -----------------

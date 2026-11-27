@@ -56,6 +56,8 @@ def route(u: Understanding, prior_unclear: int) -> Route:
         return Route("handoff", reason="customer is very upset")
     if u.mentions_legal_or_bank:
         return Route("handoff", reason="customer mentioned legal action, their bank or a chargeback")
+    if "general_question" in u.intents and not any (i in PRIORITY for i in u.intents):
+        return Route("answer")
 
     known = [i for i in PRIORITY if i in u.intents]
     if not known:

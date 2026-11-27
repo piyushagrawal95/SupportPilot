@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
-from app.core.security import require_roles, get_current_staff
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from app.core.security import require_roles
 from app.db.pool import pool
 
 router = APIRouter(prefix="/users", tags=["users"])

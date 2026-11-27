@@ -1,12 +1,18 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../supabase";
+import PasswordChecklist from "./PasswordChecklist";
+import { checkPasswordRules, PASSWORD_POLICY_MESSAGE } from "../utils/passwordRules";
 
 export default function AuthModal({ isOpen, onClose, initialMode = "login", recovery, onRecovered }) {
   const [mode, setMode] = useState(initialMode); // "login" | "signup" | "forgot"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  const enforceStrongPassword = recovery || mode === "signup";
+  const passwordValid = checkPasswordRules(password).isValid;
 
   useEffect(() => {
     setMode(initialMode);
@@ -34,9 +40,16 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login", reco
 
   async function submit(e) {
     e.preventDefault();
+    if (enforceStrongPassword && !passwordValid) {
+      setMsg({
+        ok: false,
+        text: PASSWORD_POLICY_MESSAGE,
+      });
+      return;
+    }
     setBusy(true);
     setMsg(null);
-    let error = null;
+    let error;
 
     if (recovery) {
       ({ error } = await supabase.auth.updateUser({ password }));
@@ -212,16 +225,26 @@ export default function AuthModal({ isOpen, onClose, initialMode = "login", reco
                   </button>
                 )}
               </div>
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete={mode === "signup" || recovery ? "new-password" : "current-password"}
-                placeholder="••••••••"
-                className="w-full rounded-xl border border-line bg-paper/50 px-3.5 py-2.5 text-sm text-ink focus:outline-none focus:border-accent focus:bg-white transition"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  required
+                  minLength={enforceStrongPassword ? 8 : 6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete={mode === "signup" || recovery ? "new-password" : "current-password"}
+                  placeholder="••••••••"
+                  className="w-full rounded-xl border border-line bg-paper/50 pl-3.5 pr-14 py-2.5 text-sm text-ink focus:outline-none focus:border-accent focus:bg-white transition"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-muted hover:text-ink"
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+              {enforceStrongPassword && <PasswordChecklist password={password} />}
             </div>
           )}
 

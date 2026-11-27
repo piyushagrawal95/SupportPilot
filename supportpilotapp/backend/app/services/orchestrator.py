@@ -22,6 +22,7 @@ from app.services.limits import load_history, load_limits
 from app.services.planner import plan_refund, route
 from app.services.stripe_facts import CustomerNotLinked, fetch_charge_facts, get_stripe_customer_id
 from app.services.understand import forced_handoff_reason, understand
+from app.services.general import general_answer
 
 log = logging.getLogger(__name__)
 
@@ -202,6 +203,15 @@ def run(ticket_id: int) -> Iterator[dict]:
             log.exception("could not even record the error for ticket %s", ticket_id)
             yield {"type": "reply", "text": replies.system_error(ticket_id), "ticket_status": "needs_human"}
 
+def _answer_general(ticket_id:int,text:str,status:str) -> Iterator[dict]:
+    """Product ka general jawab. Ticket ka status nahi badalta"""
+    try:
+        reply=general_answer(text)
+    except Exception:
+        log.exception("general answer failed for ticket %s",ticket_id)
+        reply=replies.held(status,ticket_id) if status in HELD else replies.not_automatic_yet(ticket_id)
+    yield _end(ticket_id,reply,status)
+
 
 def _run(ticket_id: int) -> Iterator[dict]:
     with pool.connection() as conn:
@@ -226,8 +236,14 @@ def _run(ticket_id: int) -> Iterator[dict]:
 
     # Ticket pehle se insaan ke paas hai: dobara process nahi, bas sach status
     if t["status"] in HELD:
-        yield _end(ticket_id, replies.held(t["status"], ticket_id), t["status"])
-        return
+        held_text=msgs[-1]["content"]
+        if forced_handoff_reason(held_text) is None:
+            hu=understand(msgs[:-1],held_text)
+            if route(hu,0).kind=="answer":
+                yield from _answer_general(ticket_id,held_text,t["status"])
+                return
+            yield _end(ticket_id,replies.held(t["status"],ticket_id),t["status"])
+            return
 
     text, history = msgs[-1]["content"], msgs[:-1]
 
@@ -252,6 +268,8 @@ def _run(ticket_id: int) -> Iterator[dict]:
     elif r.kind == "unsupported":
         yield _end(ticket_id, replies.not_automatic_yet(ticket_id), "needs_human",
                    use_case=r.use_case, handoff_reason=f"{r.intent} is not handled automatically yet")
+    elif r.kind=="answer":
+        yield from _answer_general(ticket_id,text,t["status"])
     else:
         yield from _handle_refund(ticket_id, t["customer_ref"], r, u)
 

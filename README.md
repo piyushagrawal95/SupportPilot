@@ -13,17 +13,18 @@ A production-grade AI autonomous customer support operations platform designed s
   - Small demo note-taking product with modern markdown workspace demo.
   - Customer registration, login, forgot & reset password (via Supabase Auth).
   - Stripe Test Mode subscription checkout ($20/month plan with test card `4242 4242 4242 4242`).
-  - Real-time floating AI Chat Widget with streaming responses, status badges (*"Waiting for approval"*, *"Connecting you to Ravi from our team"*), and real-time live human agent hand-off.
+  - Real-time floating AI Chat Widget with streaming responses, status badges (*"Waiting for approval"*, *"Connecting you to Yash from our team"*), and real-time live human agent hand-off.
 
 ### 2. SupportPilot (Staff Operations & AI Control Center)
 - **Frontend Port**: `http://localhost:5174`
 - **Backend Port**: `http://localhost:8001`
 - **Features**:
   - Staff authentication with 4 distinct roles (salted PBKDF2 hashed):
-    1. **Rahul (Support Manager - Admin)**: `rahul@cloudnotes.com`
-    2. **Ravi (Support Agent)**: `ravi@cloudnotes.com`
-    3. **Anita (Finance Approver)**: `anita@cloudnotes.com`
-    4. **Auditor (Compliance Viewer)**: `auditor@cloudnotes.com`
+    1. **Piyush (Support Manager - Admin)**: `piyush@cloudnotes.com`
+    2. **Kashish (Finance Approver)**: `kashish@cloudnotes.com`
+    3. **Yash (Support Agent)**: `yash@cloudnotes.com`
+    4. **Sonu (Support Agent)**: `sonu@cloudnotes.com`
+    5. **Auditor (Compliance Viewer)**: `auditor@cloudnotes.com`
     *(Use standard secure credentials provisioned in PostgreSQL or use the Forgot Password email recovery flow)*
   - **Overview Dashboard**: Tickets today, AI auto-resolved count, waiting for approval, live chats waiting, money refunded against the $500 cap, AI status.
   - **Ticket Directory**: Status filters (`Resolved by AI`, `Waiting for approval`, `Waiting for an agent`, `Needs a human`, `Waiting for customer`, `Closed`), use case filters, full text search.

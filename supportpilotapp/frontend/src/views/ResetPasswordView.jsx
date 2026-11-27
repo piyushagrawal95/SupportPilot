@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { KeyRound, CheckCircle2, AlertCircle, ArrowRight, Loader2 } from "lucide-react";
 import { api } from "../api";
+import PasswordChecklist from "../components/PasswordChecklist";
+import { checkPasswordRules, PASSWORD_POLICY_MESSAGE } from "../utils/passwordRules";
 
 export default function ResetPasswordView({ token }) {
   const [password, setPassword] = useState("");
@@ -11,8 +13,8 @@ export default function ResetPasswordView({ token }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!password || password.length < 8) {
-      setError("Password must be at least 8 characters long.");
+    if (!checkPasswordRules(password).isValid) {
+      setError(PASSWORD_POLICY_MESSAGE);
       return;
     }
     if (password !== confirmPassword) {
@@ -84,6 +86,7 @@ export default function ResetPasswordView({ token }) {
               placeholder="••••••••••••"
               className="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-slate-200 focus:outline-none focus:border-indigo-500"
             />
+            <PasswordChecklist password={password} dark />
           </div>
 
           <div>

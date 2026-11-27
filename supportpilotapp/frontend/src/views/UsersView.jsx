@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
+import PasswordChecklist from "../components/PasswordChecklist";
+import { checkPasswordRules, PASSWORD_POLICY_MESSAGE } from "../utils/passwordRules";
 
 export default function UsersView() {
   const { user } = useAuth();
@@ -95,6 +97,10 @@ export default function UsersView() {
 
   const handleAddStaffSubmit = async (e) => {
     e.preventDefault();
+    if (!checkPasswordRules(newPassword).isValid) {
+      alert(PASSWORD_POLICY_MESSAGE);
+      return;
+    }
     try {
       await api.addTeamMember({
         name: newName,
@@ -430,11 +436,13 @@ export default function UsersView() {
                   <input
                     type="password"
                     required
+                    minLength={8}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="••••••••"
                     className="w-full bg-[#f8fafd] border border-[#d4e3f3] rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white"
                   />
+                  <PasswordChecklist password={newPassword} />
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">

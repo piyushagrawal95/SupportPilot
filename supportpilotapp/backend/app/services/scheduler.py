@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
 from psycopg.types.json import Jsonb
 from app.core.config import settings
 from app.services import emailer

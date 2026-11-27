@@ -51,6 +51,19 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
+def validate_password_strength(password: str) -> None:
+    """Enforce >=8 chars, at least 1 uppercase letter, and at least 1 special character."""
+    if (
+        len(password) < 8
+        or not any(c.isupper() for c in password)
+        or not any(not c.isalnum() for c in password)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be at least 8 characters and include at least 1 uppercase letter and 1 special character.",
+        )
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), PBKDF2_ITERATIONS).hex()
@@ -183,6 +196,7 @@ def register_admin(
                 detail="An account with this email already exists",
             )
 
+        validate_password_strength(req.password)
         auth_id = uuid.uuid4()
         row = conn.execute(
             """
@@ -335,8 +349,7 @@ def reset_password(req: ResetPasswordRequest):
         if not user:
             raise HTTPException(status_code=400, detail="Invalid or expired reset token")
 
-        if len(req.new_password) < 6:
-            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        validate_password_strength(req.new_password)
 
         new_hash = hash_password(req.new_password)
         conn.execute(

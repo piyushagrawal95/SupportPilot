@@ -409,7 +409,54 @@ export default function TicketDetailView({ ticketId, onBack }) {
             </div>
           )}
 
-          {/* Section 4: Audit Event Timeline */}
+          {/* Section 4: Approvals */}
+          {approvals.length > 0 && (
+            <div className="bg-white border border-[#d4e3f3] rounded-2xl p-4 shadow-sm">
+              <div className="flex items-center gap-2 mb-2.5">
+                <UserCheck className="h-4 w-4 text-indigo-600" />
+                <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Approvals</h2>
+              </div>
+              <div className="space-y-2.5">
+                {approvals.map((ap) => (
+                  <div key={ap.id} className="bg-[#f8fafd] rounded-xl p-3 border border-[#d4e3f3] text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-900 capitalize">
+                        {(ap.action_type || "refund").replace("_", " ")}
+                        {ap.amount_cents > 0 ? ` ($${(ap.amount_cents / 100).toFixed(2)})` : ""}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                          ap.status === "approved"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : ap.status === "rejected"
+                            ? "bg-rose-100 text-rose-800"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {ap.status}
+                      </span>
+                    </div>
+                    {ap.decided_by_name && (
+                      <p className="text-[11px] text-slate-700">
+                        {ap.status === "rejected" ? "Rejected by:" : "Approved by:"}{" "}
+                        <strong className="text-slate-900">{ap.decided_by_name}</strong>
+                        {ap.decided_at && (
+                          <span className="text-slate-400 font-mono ml-1.5">
+                            ({new Date(ap.decided_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })})
+                          </span>
+                        )}
+                      </p>
+                    )}
+                    {ap.decision_reason && (
+                      <p className="text-[11px] text-slate-500">Reason: {ap.decision_reason}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Section 5: Audit Event Timeline */}
           <div className="bg-white border border-[#d4e3f3] rounded-2xl p-4 shadow-sm">
             <div className="flex items-center gap-2 mb-2.5">
               <Clock className="h-4 w-4 text-slate-500" />
@@ -419,15 +466,25 @@ export default function TicketDetailView({ ticketId, onBack }) {
               {events.length === 0 ? (
                 <p className="text-slate-500 italic">No events logged.</p>
               ) : (
-                events.map((ev, i) => (
-                  <div key={i} className="relative group">
-                    <span className="absolute -left-[19px] top-1 h-2.5 w-2.5 rounded-full bg-blue-600 ring-4 ring-white" />
-                    <p className="font-semibold text-slate-900 capitalize">{ev.kind.replace("_", " ")}</p>
-                    <p className="text-[10px] text-slate-500 font-mono">
-                      {new Date(ev.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                    </p>
-                  </div>
-                ))
+                events.map((ev, i) => {
+                  const actorName = ev.data?.approver_name || ev.data?.agent_name;
+                  return (
+                    <div key={i} className="relative group">
+                      <span className="absolute -left-[19px] top-1 h-2.5 w-2.5 rounded-full bg-blue-600 ring-4 ring-white" />
+                      <p className="font-semibold text-slate-900 capitalize">
+                        {ev.kind.replace(/_/g, " ")}
+                        {actorName && (
+                          <span className="ml-1.5 font-normal text-slate-600 normal-case">
+                            by <strong>{actorName}</strong>
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[10px] text-slate-500 font-mono">
+                        {new Date(ev.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      </p>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>

@@ -6,7 +6,6 @@ from psycopg.types.json import Jsonb
 from app.core.config import settings as core_settings
 from app.core.security import get_current_staff, require_roles
 from app.db.pool import pool
-from app.domain.decisions import Decision, Outcome
 from app.domain.facts import ChargeFacts, CustomerHistory, Limits
 from app.domain.policy import (
     decide_cancellation,
@@ -299,18 +298,93 @@ TEST_MESSAGES = {
     30: "Hello, can you help me with something unclear?",
 }
 
+# Expected route(understand([], TEST_MESSAGES[id]), 0) result when use_real_llm=True
+EXPECTED_LLM_ROUTES: dict[int, dict[str, Any]] = {
+    1: {"kind": "handle", "use_case": "duplicate_charge"},
+    2: {"kind": "handle", "use_case": "duplicate_charge"},
+    3: {"kind": "handle", "use_case": "duplicate_charge"},
+    4: {"kind": "handle", "use_case": "duplicate_charge"},
+    5: {"kind": "handle", "use_case": "refund"},
+    6: {"kind": "handle", "use_case": "refund"},
+    7: {"kind": "handle", "use_case": "refund"},
+    8: {"kind": "handle", "use_case": "refund"},
+    9: {"kind": "handle", "use_case": "duplicate_charge"},
+    10: {"kind": "handle", "use_case": "refund"},
+    11: {"kind": "handle", "use_case": "refund"},
+    12: {"kind": "handle", "use_case": "refund"},
+    13: {"kind": "handle", "use_case": "cancellation"},
+    14: {"kind": "handle", "use_case": ("cancellation", "refund")},
+    15: {"kind": "handle", "use_case": ("cancellation", "refund")},
+    16: {"kind": "handoff", "handoff": True},
+    17: {"kind": ("ask", "handoff", "unsupported"), "handoff": False},
+    18: {"kind": ("ask", "handoff", "unsupported"), "handoff": False},
+    19: {"kind": "unsupported", "use_case": "failed_payment"},
+    20: {"kind": "handle", "use_case": "refund"},
+    21: {"kind": "handle", "use_case": "refund"},
+    22: {"kind": "handle", "use_case": "refund"},
+    23: {"kind": "handle", "use_case": "refund"},
+    24: {"kind": "handle", "use_case": "refund"},
+    25: {"kind": "handoff", "handoff": True},
+    26: {"kind": "handoff", "handoff": True},
+    27: {"kind": "handoff", "handoff": True},
+    28: {"kind": "handoff", "handoff": True},
+    29: {"kind": "handle", "use_case": "duplicate_charge", "also": "cancellation"},
+    30: {"kind": "ask", "handoff_after_two_tries": True},
+}
+
+
+def _validate_llm_route(tid: int, u: Understanding) -> tuple[bool, str]:
+    """Compare route(understand(...)) output against EXPECTED_LLM_ROUTES[tid]."""
+    spec = EXPECTED_LLM_ROUTES[tid]
+    r = route(u, 0)
+    expected_kind = spec["kind"]
+    kind_ok = r.kind in expected_kind if isinstance(expected_kind, tuple) else r.kind == expected_kind
+    if not kind_ok:
+        return False, f"expected route kind={expected_kind}, got kind={r.kind} (use_case={r.use_case}, reason={r.reason})"
+
+    if "use_case" in spec:
+        exp_uc = spec["use_case"]
+        uc_ok = r.use_case in exp_uc if isinstance(exp_uc, tuple) else r.use_case == exp_uc
+        if not uc_ok:
+            return False, f"expected use_case={exp_uc}, got use_case={r.use_case}"
+
+    if "also" in spec and r.also != spec["also"]:
+        return False, f"expected also={spec['also']}, got also={r.also}"
+
+    if spec.get("handoff") and r.kind != "handoff":
+        return False, f"expected handoff, got kind={r.kind}"
+
+    if spec.get("handoff_after_two_tries"):
+        r2 = route(u, 1)
+        if r2.kind != "handoff" or "two tries" not in r2.reason:
+            return False, f"expected handoff on 2nd try, got kind={r2.kind}, reason={r2.reason}"
+
+    return True, ""
+
+
 def _run_single_test(test: dict[str, Any], use_real_llm: bool = False) -> dict[str, Any]:
     tid = test["id"]
     now = datetime.now(timezone.utc)
     llm_understanding = None
+    u_real: Understanding | None = None
 
     if use_real_llm:
         msg = TEST_MESSAGES.get(tid, test["description"])
         try:
-            u = understand([], msg)
-            llm_understanding = u.model_dump()
-        except Exception:
-            pass
+            u_real = understand([], msg, raise_on_error=True)
+            llm_understanding = u_real.model_dump()
+        except Exception as e:
+            return {
+                "id": tid,
+                "name": test["name"],
+                "category": test["category"],
+                "description": test["description"],
+                "expected_outcome": test["expected_outcome"],
+                "expected_rule": test["expected_rule"],
+                "actual_outcome": "llm_error",
+                "actual_rule": f"LLM_ERROR: {type(e).__name__}: {str(e)[:200]}",
+                "passed": False,
+            }
 
     # Base test limits
     default_limits = Limits(
@@ -498,45 +572,65 @@ def _run_single_test(test: dict[str, Any], use_real_llm: bool = False) -> dict[s
         passed = actual_outcome == test["expected_outcome"] and actual_rule == test["expected_rule"]
 
     elif tid == 25:
-        u = Understanding(very_upset=True)
+        u = u_real if u_real is not None else Understanding(very_upset=True)
         r = route(u, 0)
         actual_outcome, actual_rule = r.kind, r.reason
         passed = actual_outcome == "handoff" and "upset" in actual_rule
 
     elif tid == 26:
-        u = Understanding(asks_for_human=True)
+        u = u_real if u_real is not None else Understanding(asks_for_human=True)
         r = route(u, 0)
         actual_outcome, actual_rule = r.kind, r.reason
         passed = actual_outcome == "handoff" and "person" in actual_rule
 
     elif tid == 27:
-        reason = forced_handoff_reason("I will get my lawyer to sue you")
+        msg_27 = TEST_MESSAGES[27] if u_real is not None else "I will get my lawyer to sue you"
+        reason = forced_handoff_reason(msg_27)
         actual_outcome, actual_rule = "handoff", "forced_handoff_phrase"
         passed = reason is not None and "lawyer" in reason
+        if u_real is not None:
+            r = route(u_real, 0)
+            if r.kind != "handoff":
+                passed = False
+                actual_outcome, actual_rule = r.kind, f"LLM_ROUTE_MISMATCH: expected handoff, got {r.kind}"
 
     elif tid == 28:
-        reason = forced_handoff_reason("I will call my bank and initiate a dispute")
+        msg_28 = TEST_MESSAGES[28] if u_real is not None else "I will call my bank and initiate a dispute"
+        reason = forced_handoff_reason(msg_28)
         actual_outcome, actual_rule = "handoff", "forced_handoff_phrase"
         passed = reason is not None and "bank" in reason
+        if u_real is not None:
+            r = route(u_real, 0)
+            if r.kind != "handoff":
+                passed = False
+                actual_outcome, actual_rule = r.kind, f"LLM_ROUTE_MISMATCH: expected handoff, got {r.kind}"
 
     elif tid == 29:
-        u = Understanding(intents=["duplicate_charge", "cancel_subscription"])
+        u = u_real if u_real is not None else Understanding(intents=["duplicate_charge", "cancel_subscription"])
         r = route(u, 0)
         actual_outcome = r.kind
-        actual_rule = "DUPLICATE_PRIORITIZED"
+        actual_rule = "DUPLICATE_PRIORITIZED" if (r.kind == "handle" and r.intent == "duplicate_charge" and r.also == "cancellation") else f"intent={r.intent}, also={r.also}"
         passed = r.kind == "handle" and r.intent == "duplicate_charge" and r.also == "cancellation"
 
     elif tid == 30:
-        u = Understanding(intents=["unclear"])
+        u = u_real if u_real is not None else Understanding(intents=["unclear"])
         # 1st try gives ask
         r1 = route(u, 0)
         # 2nd try gives handoff
         r2 = route(u, 1)
-        actual_outcome = "handoff_after_two_tries"
+        actual_outcome = "handoff_after_two_tries" if (r1.kind == "ask" and r2.kind == "handoff") else f"{r1.kind}->{r2.kind}"
         actual_rule = r2.reason
         passed = r1.kind == "ask" and r2.kind == "handoff" and "two tries" in r2.reason
 
-    return {
+    if use_real_llm and u_real is not None and passed and tid <= 24:
+        route_ok, route_err = _validate_llm_route(tid, u_real)
+        if not route_ok:
+            r_llm = route(u_real, 0)
+            passed = False
+            actual_outcome = f"{r_llm.kind}:{r_llm.use_case or 'none'}"
+            actual_rule = f"LLM_ROUTE_MISMATCH: {route_err}"
+
+    result = {
         "id": tid,
         "name": test["name"],
         "category": test["category"],
@@ -547,6 +641,9 @@ def _run_single_test(test: dict[str, Any], use_real_llm: bool = False) -> dict[s
         "actual_rule": actual_rule,
         "passed": passed,
     }
+    if use_real_llm:
+        result["llm_understanding"] = llm_understanding
+    return result
 
 @router.get("/cases")
 def list_test_cases(_: dict = Depends(get_current_staff)):
