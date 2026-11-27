@@ -1,17 +1,27 @@
 import hashlib
 import hmac
 import secrets
+import threading
+import time
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from app.core.config import settings
-from app.core.security import create_access_token, get_current_staff
+from app.core.security import create_access_token, decode_access_token, get_current_staff
 from app.db.pool import pool
 from app.services import emailer
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+PBKDF2_ITERATIONS = 600000
+
+_LOGIN_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
+_LOGIN_LOCK = threading.Lock()
+_MAX_LOGIN_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 300  # 5 minutes lockout window
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -43,8 +53,8 @@ class ResetPasswordRequest(BaseModel):
 
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
-    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000).hex()
-    return f"pbkdf2:sha256:100000${salt}${key}"
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), PBKDF2_ITERATIONS).hex()
+    return f"pbkdf2:sha256:{PBKDF2_ITERATIONS}${salt}${key}"
 
 def verify_password(stored: str | None, provided: str) -> bool:
     if not stored:
@@ -68,8 +78,21 @@ def verify_password(stored: str | None, provided: str) -> bool:
         return False
 
 @router.post("/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
     email = req.email.strip().lower()
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"{email}:{client_ip}"
+    now_ts = time.time()
+
+    with _LOGIN_LOCK:
+        recent = [t for t in _LOGIN_ATTEMPTS[rate_key] if now_ts - t < _LOGIN_WINDOW_SECONDS]
+        if len(recent) >= _MAX_LOGIN_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed login attempts. Please wait 5 minutes before trying again.",
+            )
+        _LOGIN_ATTEMPTS[rate_key] = recent
+
     with pool.connection() as conn:
         user = conn.execute(
             "select id, auth_user_id, email, name, role, availability, password_hash "
@@ -78,10 +101,16 @@ def login(req: LoginRequest):
         ).fetchone()
 
         if not user or not verify_password(user["password_hash"], req.password):
+            with _LOGIN_LOCK:
+                _LOGIN_ATTEMPTS[rate_key].append(time.time())
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
             )
+
+        # Clear failed attempts on successful login
+        with _LOGIN_LOCK:
+            _LOGIN_ATTEMPTS.pop(rate_key, None)
 
         now = datetime.now(timezone.utc)
         conn.execute(
@@ -110,38 +139,61 @@ def login(req: LoginRequest):
         }
 
 @router.post("/register-admin")
-def register_admin(req: RegisterAdminRequest):
+def register_admin(
+    req: RegisterAdminRequest,
+    authorization: str | None = Header(default=None),
+):
     email = req.email.strip().lower()
     name = req.name.strip()
     pw_hash = hash_password(req.password)
     now = datetime.now(timezone.utc)
 
     with pool.connection() as conn:
+        admin_count_row = conn.execute("select count(*) as cnt from staff_users where role = 'admin'").fetchone()
+        admin_count = admin_count_row["cnt"] if admin_count_row else 0
+
+        # If at least one admin exists, require caller to be an authenticated admin
+        if admin_count > 0:
+            if not authorization or not authorization.startswith("Bearer "):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin bootstrap is closed. Only existing administrators can register new admins.",
+                )
+            token = authorization.removeprefix("Bearer ")
+            payload = decode_access_token(token)
+            caller_id = payload.get("id")
+            caller = conn.execute(
+                "select id, role from staff_users where id = %s",
+                (caller_id,),
+            ).fetchone()
+            if not caller or caller["role"] != "admin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin privilege required to register additional admin accounts.",
+                )
+
         existing = conn.execute(
-            "select id, auth_user_id, email, name, role, availability from staff_users where lower(email) = %s",
+            "select id from staff_users where lower(email) = %s",
             (email,),
         ).fetchone()
 
         if existing:
-            # Promote existing user to admin with new password
-            conn.execute(
-                "update staff_users set name = %s, role = 'admin', password_hash = %s, availability = 'available', last_seen_at = %s where id = %s",
-                (name, pw_hash, now, existing["id"]),
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An account with this email already exists",
             )
-            user_id = existing["id"]
-            auth_user_id = str(existing["auth_user_id"])
-        else:
-            auth_id = uuid.uuid4()
-            row = conn.execute(
-                """
-                insert into staff_users (auth_user_id, email, name, role, availability, password_hash, last_seen_at)
-                values (%s, %s, %s, 'admin', 'available', %s, %s)
-                returning id, auth_user_id
-                """,
-                (auth_id, email, name, pw_hash, now),
-            ).fetchone()
-            user_id = row["id"]
-            auth_user_id = str(row["auth_user_id"])
+
+        auth_id = uuid.uuid4()
+        row = conn.execute(
+            """
+            insert into staff_users (auth_user_id, email, name, role, availability, password_hash, last_seen_at)
+            values (%s, %s, %s, 'admin', 'available', %s, %s)
+            returning id, auth_user_id
+            """,
+            (auth_id, email, name, pw_hash, now),
+        ).fetchone()
+        user_id = row["id"]
+        auth_user_id = str(row["auth_user_id"])
 
         token = create_access_token({
             "id": user_id,
@@ -164,52 +216,11 @@ def register_admin(req: RegisterAdminRequest):
         }
 
 @router.post("/register-staff")
-def register_staff(req: RegisterStaffRequest):
-    email = req.email.strip().lower()
-    name = req.name.strip()
-    pw_hash = hash_password(req.password)
-    now = datetime.now(timezone.utc)
-
-    with pool.connection() as conn:
-        existing = conn.execute(
-            "select id from staff_users where lower(email) = %s",
-            (email,),
-        ).fetchone()
-
-        if existing:
-            raise HTTPException(status_code=400, detail="An account with this email already exists")
-
-        auth_id = uuid.uuid4()
-        row = conn.execute(
-            """
-            insert into staff_users (auth_user_id, email, name, role, availability, password_hash, last_seen_at)
-            values (%s, %s, %s, 'agent', 'available', %s, %s)
-            returning id, auth_user_id
-            """,
-            (auth_id, email, name, pw_hash, now),
-        ).fetchone()
-        user_id = row["id"]
-        auth_user_id = str(row["auth_user_id"])
-
-        token = create_access_token({
-            "id": user_id,
-            "auth_user_id": auth_user_id,
-            "email": email,
-            "name": name,
-            "role": "agent",
-            "availability": "available",
-        })
-
-        return {
-            "token": token,
-            "user": {
-                "id": user_id,
-                "email": email,
-                "name": name,
-                "role": "agent",
-                "availability": "available",
-            },
-        }
+def register_staff():
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Public staff registration is disabled. Administrators can add team members under Settings -> Team.",
+    )
 
 @router.post("/role-request")
 def request_role_upgrade(

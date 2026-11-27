@@ -16,6 +16,10 @@ class ActionResult:
     amount_cents: int = 0
     code: str = ""              # blocked ke case me: kill_switch, watching_mode, auto_mode_off, paused, over_limit, customer_limit, daily_cap
 
+    @property
+    def message(self) -> str:
+        return self.reason
+
 
 def refund_key(charge_id: str, amount_cents: int) -> str:
     """Same charge + same amount = same key, chahe kisi bhi ticket/chat se aaye.
@@ -157,7 +161,9 @@ def execute_refund(pool, *, ticket_id: int, stripe_customer_id: str, charge_id: 
         return ActionResult("done", "Refund completed", refund["id"], amount_cents)
 
 
-def cancel_key(stripe_customer_id: str, mode: str) -> str:
+def cancel_key(stripe_customer_id: str, mode: str, subscription_id: str | None = None) -> str:
+    if subscription_id:
+        return f"cancel:{stripe_customer_id}:{subscription_id}:{mode}"
     return f"cancel:{stripe_customer_id}:{mode}"
 
 
@@ -169,12 +175,24 @@ def execute_cancellation(
     mode: str = "period_end",
     refund_amount_cents: int = 0,
     charge_id: str | None = None,
+    subscription_id: str | None = None,
     executed_by: str = "ai_auto",
     approval_id: int | None = None,
 ) -> ActionResult:
     """Executes subscription cancellation with Stripe and logs event (Bug 13 fix).
     Modes: 'period_end' (cancels at billing period end) or 'immediate' (instant cancel with optional unused refund)."""
-    key = cancel_key(stripe_customer_id, mode)
+    sub_id = subscription_id
+    if not sub_id:
+        try:
+            subs = stripe.Subscription.list(customer=stripe_customer_id, status="active", limit=1)
+            if not subs.data:
+                subs = stripe.Subscription.list(customer=stripe_customer_id, limit=1)
+            if subs.data:
+                sub_id = subs.data[0].id
+        except Exception:
+            pass
+
+    key = cancel_key(stripe_customer_id, mode, sub_id)
 
     with pool.connection() as conn:
         conn.execute("select pg_advisory_xact_lock(hashtext(%s))", (key,))
@@ -193,16 +211,17 @@ def execute_cancellation(
             ).fetchone()["id"]
 
         try:
-            subs = stripe.Subscription.list(customer=stripe_customer_id, status="active", limit=1)
-            if not subs.data:
-                subs = stripe.Subscription.list(customer=stripe_customer_id, limit=1)
+            if not sub_id:
+                subs = stripe.Subscription.list(customer=stripe_customer_id, status="active", limit=1)
+                if not subs.data:
+                    subs = stripe.Subscription.list(customer=stripe_customer_id, limit=1)
 
-            if not subs.data:
-                _finish(conn, action_id, ticket_id, executed_by, "done", data={"note": "No active Stripe subscription"})
-                return ActionResult("done", "No active subscription found to cancel", None)
+                if not subs.data:
+                    _finish(conn, action_id, ticket_id, executed_by, "done", data={"note": "No active Stripe subscription"})
+                    return ActionResult("done", "No active subscription found to cancel", None)
 
-            sub = subs.data[0]
-            sub_id = sub.id
+                sub = subs.data[0]
+                sub_id = sub.id
 
             if mode == "period_end":
                 updated = _plain(stripe.Subscription.modify(sub_id, cancel_at_period_end=True, idempotency_key=key))

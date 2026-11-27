@@ -1,38 +1,27 @@
 import React, { useState } from "react";
 import { createPortal } from "react-dom";
-import { Lock, Mail, ArrowRight, Shield, User, KeyRound } from "lucide-react";
+import { Lock, Mail, ArrowRight, Shield } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api";
 
 export default function LoginView() {
-  const { login, registerStaff } = useAuth();
-  const [mode, setMode] = useState("signin"); // "signin" | "register_agent"
-  const [name, setName] = useState("");
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotMsg, setForgotMsg] = useState(null);
 
+  const cloudnotesUrl = import.meta.env.VITE_CLOUDNOTES_URL || "http://localhost:5173";
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      if (mode === "register_agent") {
-        if (password !== confirmPassword) {
-          throw new Error("Passwords do not match");
-        }
-        if (password.length < 6) {
-          throw new Error("Password must be at least 6 characters long");
-        }
-        await registerStaff(name, email, password);
-      } else {
-        await login(email, password);
-      }
+      await login(email, password);
     } catch (err) {
       setError(err.message || "Authentication failed. Please check your credentials.");
     } finally {
@@ -68,47 +57,10 @@ export default function LoginView() {
 
         {/* Card */}
         <div className="bg-white border border-[#d4e3f3] rounded-2xl p-6 shadow-xl">
-          {/* Tabs */}
-          <div className="flex bg-slate-100 p-1 rounded-xl border border-[#d4e3f3] mb-5 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => {
-                setMode("signin");
-                setError(null);
-              }}
-              className={`flex-1 py-2 rounded-lg transition text-center ${
-                mode === "signin"
-                  ? "bg-white text-blue-700 shadow-sm font-bold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              Staff Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode("register_agent");
-                setError(null);
-              }}
-              className={`flex-1 py-2 rounded-lg transition text-center flex items-center justify-center gap-1.5 ${
-                mode === "register_agent"
-                  ? "bg-white text-blue-700 shadow-sm font-bold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <Shield className="h-3.5 w-3.5" />
-              <span>Join as Staff (Agent)</span>
-            </button>
-          </div>
-
           <div className="mb-4">
-            <h2 className="text-base font-semibold text-slate-900">
-              {mode === "register_agent" ? "Join Support Team as Agent" : "Sign in to your account"}
-            </h2>
+            <h2 className="text-base font-semibold text-slate-900">Sign in to your account</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {mode === "register_agent"
-                ? "New staff join with Agent access. You can request role upgrades to Approver or Admin from your dashboard."
-                : "Enter your registered staff email and password."}
+              Enter your registered staff email and password.
             </p>
           </div>
 
@@ -119,26 +71,9 @@ export default function LoginView() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === "register_agent" && (
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">Full Name</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Rahul Sharma"
-                    className="w-full bg-[#f8fafd] border border-[#d4e3f3] rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white transition"
-                  />
-                </div>
-              </div>
-            )}
-
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                {mode === "register_agent" ? "Work Email Address" : "Email address"}
+                Email address
               </label>
               <div className="relative">
                 <Mail className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -156,15 +91,13 @@ export default function LoginView() {
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-xs font-medium text-slate-700">Password</label>
-                {mode === "signin" && (
-                  <button
-                    type="button"
-                    onClick={() => setForgotOpen(true)}
-                    className="text-xs text-blue-600 hover:text-blue-700 hover:underline"
-                  >
-                    Forgot password?
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setForgotOpen(true)}
+                  className="text-xs text-blue-600 hover:text-blue-700 hover:underline"
+                >
+                  Forgot password?
+                </button>
               </div>
               <div className="relative">
                 <Lock className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -179,29 +112,12 @@ export default function LoginView() {
               </div>
             </div>
 
-            {mode === "register_agent" && (
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">Confirm Password</label>
-                <div className="relative">
-                  <KeyRound className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                  <input
-                    type="password"
-                    required
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full bg-[#f8fafd] border border-[#d4e3f3] rounded-xl pl-9 pr-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white transition"
-                  />
-                </div>
-              </div>
-            )}
-
             <button
               type="submit"
               disabled={busy}
               className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 font-semibold text-white text-sm transition shadow-md shadow-blue-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              <span>{busy ? "Processing…" : mode === "register_agent" ? "Register as Agent & Enter" : "Sign In"}</span>
+              <span>{busy ? "Signing in…" : "Sign In"}</span>
               <ArrowRight className="h-4 w-4" />
             </button>
           </form>
@@ -212,12 +128,12 @@ export default function LoginView() {
           <p className="text-xs text-slate-500">
             Looking for CloudNotes customer app?{" "}
             <a
-              href="http://localhost:5173"
+              href={cloudnotesUrl}
               target="_blank"
               rel="noreferrer"
               className="text-blue-600 hover:text-blue-700 underline font-medium"
             >
-              Open CloudNotes (Port 5173)
+              Open CloudNotes
             </a>
           </p>
         </div>

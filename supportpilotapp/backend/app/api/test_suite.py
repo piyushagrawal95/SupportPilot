@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from psycopg.types.json import Jsonb
 from app.core.config import settings as core_settings
-from app.core.security import get_current_staff
+from app.core.security import get_current_staff, require_roles
 from app.db.pool import pool
 from app.domain.decisions import Decision, Outcome
 from app.domain.facts import ChargeFacts, CustomerHistory, Limits
@@ -555,7 +555,7 @@ def list_test_cases(_: dict = Depends(get_current_staff)):
 @router.get("/run")
 def run_test_suite(
     use_real_llm: bool = Query(default=False),
-    _: dict = Depends(get_current_staff),
+    _: dict = Depends(require_roles(["admin"])),
 ):
     results = [_run_single_test(tc, use_real_llm=use_real_llm) for tc in TEST_CASES]
     total = len(results)

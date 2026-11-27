@@ -107,30 +107,39 @@ def _request_approval(ticket_id, charge, amount_cents, use_case, rule, reason, i
     suggestion = f"Cancel subscription ({rule}): {reason}" if action_type == "cancel_subscription" else f"Refund {replies.money(amount_cents)} ({rule}): {reason}"
 
     with pool.connection() as conn:
-        # Dynamic approver email resolution from settings or staff
+        # Dynamic approver email resolution from settings or staff (plural approvers support - Bug 7 & 14 fix)
         stg = conn.execute("select approver_emails from settings where id=1").fetchone()
-        approver_email = None
+        approver_emails: list[str] = []
         if stg and stg.get("approver_emails"):
-            emails = [e for e in stg["approver_emails"] if e and e.strip()]
-            if emails:
-                approver_email = emails[0].strip()
-        if not approver_email:
-            approver_user = conn.execute(
-                "select email from staff_users where role = 'approver' order by id limit 1"
-            ).fetchone()
-            if approver_user and approver_user.get("email"):
-                approver_email = approver_user["email"].strip()
-        # Bug 3 fix: Settings aur staff dono khaali ho to approval admin ko bhejo (never hardcoded anita)
-        if not approver_email:
-            admin_user = conn.execute(
-                "select email from staff_users where role = 'admin' order by id limit 1"
-            ).fetchone()
-            if admin_user and admin_user.get("email"):
-                approver_email = admin_user["email"].strip()
-            else:
-                approver_email = "admin@cloudnotes.com"
+            approver_emails = [e.strip() for e in stg["approver_emails"] if e and e.strip()]
 
-        evidence["approver_email"] = approver_email
+        if not approver_emails:
+            approvers = conn.execute(
+                "select email from staff_users where role = 'approver' order by id asc"
+            ).fetchall()
+            approver_emails = [a["email"].strip() for a in approvers if a.get("email")]
+
+        if not approver_emails:
+            admins = conn.execute(
+                "select email from staff_users where role = 'admin' order by id asc"
+            ).fetchall()
+            approver_emails = [a["email"].strip() for a in admins if a.get("email")]
+
+        # Bug 14 fix: Remove fake hardcoded fallback; raise clear error/handoff if no approvers exist
+        if not approver_emails:
+            _log(conn, ticket_id, "approval_error", "system",
+                 {"error": "No approver or admin accounts configured in system"})
+            return _end(
+                ticket_id,
+                "Your request requires supervisor approval, but no active approvers are currently configured in SupportPilot. I have transferred this ticket to our senior operations team to assist you directly.",
+                "needs_human",
+                use_case=use_case,
+                handoff_reason="No approvers configured in system",
+            )
+
+        primary_approver = approver_emails[0]
+        evidence["approver_emails"] = approver_emails
+        evidence["approver_email"] = primary_approver
 
         row = conn.execute(
             "insert into approvals (ticket_id, action_type, stripe_charge_id, amount_cents, evidence, "
@@ -139,36 +148,36 @@ def _request_approval(ticket_id, charge, amount_cents, use_case, rule, reason, i
             "on conflict (stripe_charge_id, action_type) "
             "where status='pending' and stripe_charge_id is not null do nothing returning id",
             (ticket_id, action_type, charge_id, amount_cents, Jsonb(evidence),
-             suggestion, token_hash, approver_email, APPROVAL_HOURS),
+             suggestion, token_hash, primary_approver, APPROVAL_HOURS),
         ).fetchone()
         is_new = row is not None
         if not is_new:
             row = conn.execute(
                 "select id from approvals where stripe_charge_id=%s and action_type=%s and status='pending'",
                 (charge_id, action_type)).fetchone()
-            # Ensure approver_email is recorded
             conn.execute(
                 "update approvals set approver_email = coalesce(approver_email, %s) where id = %s",
-                (approver_email, row["id"]),
+                (primary_approver, row["id"]),
             )
         approval_id = row["id"]
         _log(conn, ticket_id, "approval_requested", "ai",
              {"approval_id": approval_id, "new": is_new, "action_type": action_type, **evidence})
 
-    # Dispatch email to approver with raw token link
+    # Dispatch email to all configured approvers with raw token link (Bug 7 fix)
     approval_link = f"{settings.frontend_url}/approve?token={raw_token}"
     action_label = "Cancellation" if action_type == "cancel_subscription" else f"Refund {replies.money(amount_cents)}"
-    emailer.send_once(
-        pool,
-        dedupe_key=f"approval_req:{approval_id}",
-        to_email=approver_email,
-        subject=f"Approval Required: {action_label} for Ticket #{ticket_id}",
-        text=f"Hello Approver,\n\nSupportPilot requested approval for {action_label}.\n"
-             f"Rule: {rule}\nReason: {reason}\n\n"
-             f"Click to review and decide in SupportPilot:\n{approval_link}\n\n"
-             f"This link expires in 48 hours.\n\nSupportPilot Automated Operations",
-        ticket_id=ticket_id,
-    )
+    for target_email in approver_emails:
+        emailer.send_once(
+            pool,
+            dedupe_key=f"approval_req:{approval_id}:{target_email}",
+            to_email=target_email,
+            subject=f"Approval Required: {action_label} for Ticket #{ticket_id}",
+            text=f"Hello Approver,\n\nSupportPilot requested approval for {action_label}.\n"
+                 f"Rule: {rule}\nReason: {reason}\n\n"
+                 f"Click to review and decide in SupportPilot:\n{approval_link}\n\n"
+                 f"This link expires in 48 hours.\n\nSupportPilot Automated Operations",
+            ticket_id=ticket_id,
+        )
 
     if action_type == "cancel_subscription":
         text = replies.cancellation_needs_approval(amount_cents, ticket_id) + also
@@ -315,16 +324,18 @@ def _handle_refund(ticket_id: int, user_id: str, r, u=None) -> Iterator[dict]:
             return
 
         yield _status("Processing your cancellation…")
+        sub_id = plan.subscription.id if (plan and getattr(plan, "subscription", None)) else None
         res = actions.execute_cancellation(
             pool, ticket_id=ticket_id, stripe_customer_id=scid, mode=mode,
             refund_amount_cents=d.amount_cents, charge_id=plan.charge.charge_id if plan.charge else None,
+            subscription_id=sub_id,
             executed_by="ai_auto"
         )
         if res.status not in ("done", "already_done"):
             # Bug 7 fix: Never say it's done until it is done
             yield _end(
                 ticket_id,
-                f"We encountered an issue while processing your cancellation ({res.message}). I have transferred this to our support team to complete manually for you.",
+                f"We encountered an issue while processing your cancellation ({res.reason}). I have transferred this to our support team to complete manually for you.",
                 "needs_human",
                 use_case="cancellation",
             )

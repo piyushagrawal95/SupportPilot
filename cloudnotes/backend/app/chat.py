@@ -1,7 +1,10 @@
 import json
+import threading
+import time
+from collections import defaultdict
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -9,6 +12,11 @@ from app.auth import current_user
 from app.config import settings
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+_CHAT_RATE_LIMIT = 10
+_CHAT_WINDOW_SECONDS = 60
+_chat_history: dict[str, list[float]] = defaultdict(list)
+_chat_lock = threading.Lock()
 
 
 class ChatIn(BaseModel):
@@ -22,6 +30,20 @@ def _sse(event: dict) -> bytes:
 
 @router.post("/message")
 async def send_message(body: ChatIn, user=Depends(current_user)):
+    # Per-customer rate limit (Bug 9 fix: max 10 messages per minute)
+    user_id = str(user["id"])
+    now = time.time()
+    cutoff = now - _CHAT_WINDOW_SECONDS
+    with _chat_lock:
+        recent = [t for t in _chat_history[user_id] if t > cutoff]
+        if len(recent) >= _CHAT_RATE_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Rate limit exceeded: maximum {_CHAT_RATE_LIMIT} messages per minute allowed. Please wait a moment.",
+            )
+        recent.append(now)
+        _chat_history[user_id] = recent
+
     # user_id sirf login token se aaya hai, body se kabhi nahi
     payload = {"user_id": user["id"], "message": body.message, "ticket_id": body.ticket_id}
 

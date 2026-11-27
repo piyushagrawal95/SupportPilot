@@ -3,6 +3,7 @@ import hmac
 import jwt
 from fastapi import Depends, Header, HTTPException, status
 from app.core.config import settings
+from app.db.pool import pool
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
@@ -41,7 +42,20 @@ def get_current_staff(authorization: str | None = Header(default=None)) -> dict:
     user_id = payload.get("id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
-    return payload
+
+    with pool.connection() as conn:
+        user = conn.execute(
+            "select id, auth_user_id, email, name, role, availability from staff_users where id = %s",
+            (user_id,),
+        ).fetchone()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account no longer exists or has been deactivated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return dict(user)
 
 def require_roles(allowed_roles: list[str]):
     def checker(staff: dict = Depends(get_current_staff)):
@@ -61,9 +75,8 @@ def require_internal_or_staff(
     if x_internal_key and settings.internal_api_key and hmac.compare_digest(x_internal_key, settings.internal_api_key):
         return {"type": "internal"}
     if authorization and authorization.startswith("Bearer "):
-        token = authorization.removeprefix("Bearer ")
-        payload = decode_access_token(token)
-        return {"type": "staff", "user": payload}
+        user = get_current_staff(authorization)
+        return {"type": "staff", "user": user}
     raise HTTPException(status_code=401, detail="Unauthorized: provide valid X-Internal-Key or Bearer token")
 
 def require_internal_or_admin(
@@ -73,9 +86,8 @@ def require_internal_or_admin(
     if x_internal_key and settings.internal_api_key and hmac.compare_digest(x_internal_key, settings.internal_api_key):
         return {"type": "internal"}
     if authorization and authorization.startswith("Bearer "):
-        token = authorization.removeprefix("Bearer ")
-        payload = decode_access_token(token)
-        if payload.get("role") == "admin":
-            return {"type": "staff", "user": payload}
+        user = get_current_staff(authorization)
+        if user.get("role") == "admin":
+            return {"type": "staff", "user": user}
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied. Admin role required.")
     raise HTTPException(status_code=401, detail="Unauthorized")

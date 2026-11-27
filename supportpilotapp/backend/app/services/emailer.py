@@ -3,6 +3,7 @@ Ek hi email dobara nahi jaata (dedupe_key), aur email fail ho to bhi caller ko e
 import logging
 
 import httpx
+from psycopg.types.json import Jsonb
 
 from app.core.config import settings
 
@@ -80,8 +81,13 @@ def send_once(pool, *, dedupe_key: str, to_email: str, subject: str, text: str,
             else:
                 conn.execute("update email_outbox set status='failed', error=%s where id=%s",
                              (error, claimed["id"]))
+                if ticket_id is not None:
+                    conn.execute(
+                        "insert into ticket_events (ticket_id, kind, actor, data) values (%s, 'email_failed', 'system', %s)",
+                        (ticket_id, Jsonb({"dedupe_key": dedupe_key, "to_email": to_email, "subject": subject, "error": error})),
+                    )
         if error:
-            log.warning("email %s failed: %s", dedupe_key, error)
+            log.error("EMAIL DELIVERY FAILED for %s (to=%s, ticket_id=%s): %s", dedupe_key, to_email, ticket_id, error)
             return "failed"
         return "sent"
     except Exception:

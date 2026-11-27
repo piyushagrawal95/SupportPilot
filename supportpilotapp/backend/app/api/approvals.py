@@ -166,11 +166,11 @@ def decide_approval(
                     else:
                         conn.execute(
                             "insert into ticket_events (ticket_id, kind, actor, data) values (%s, 'approval_execution_failed', %s, %s)",
-                            (ticket_id, f"human:{staff_id}", Jsonb({"error": res.message, "action_type": "cancel_subscription"})),
+                            (ticket_id, f"human:{staff_id}", Jsonb({"error": res.reason, "action_type": "cancel_subscription"})),
                         )
                         conn.execute("update tickets set status = 'needs_human', updated_at = now() where id = %s", (ticket_id,))
                         conn.commit()
-                        return {"ok": False, "status": "execution_failed", "error": res.message}
+                        return {"ok": False, "status": "execution_failed", "error": res.reason}
                 else:
                     # refund
                     res = actions.execute_refund(
@@ -280,6 +280,16 @@ def get_approval_by_token(raw_token: str):
 
         if not a:
             raise HTTPException(status_code=404, detail="Invalid approval link")
+
+        # Bug 15 fix: Expiry check - do not show evidence on expired links
+        now = datetime.now(timezone.utc)
+        exp = a.get("expires_at")
+        if exp:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if now > exp:
+                raise HTTPException(status_code=410, detail="This approval link has expired")
+
         return dict(a)
 
 @router.post("/token/{raw_token}/decide")
@@ -287,33 +297,57 @@ def decide_approval_by_token(raw_token: str, body: ApprovalDecisionIn):
     token_hash = hashlib.sha256(raw_token.strip().encode()).hexdigest()
     with pool.connection() as conn:
         a = conn.execute(
-            "select id, approver_email, evidence from approvals where token_hash = %s",
+            "select id, approver_email, evidence, expires_at, status from approvals where token_hash = %s",
             (token_hash,),
         ).fetchone()
         if not a:
             raise HTTPException(status_code=404, detail="Invalid approval link")
+
+        now = datetime.now(timezone.utc)
+        exp = a.get("expires_at")
+        if exp:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if now > exp:
+                raise HTTPException(status_code=410, detail="This approval link has expired")
+
+        if a["status"] != "pending":
+            raise HTTPException(status_code=400, detail=f"Approval request is already {a['status']}")
+
         approval_id = a["id"]
 
-        # Bug 2 fix: Body ka approver_email field ignore karo.
-        # Token ke saath jo approver_email save hua tha wahi use karo.
-        saved_email = (a.get("approver_email") or "").strip()
-        if not saved_email and a.get("evidence"):
-            saved_email = ((a.get("evidence") or {}).get("approver_email") or "").strip()
+        evidence = a.get("evidence") or {}
+        candidate_emails = evidence.get("approver_emails") or []
+        if not candidate_emails and a.get("approver_email"):
+            candidate_emails = [e.strip() for e in a["approver_email"].split(",") if e.strip()]
 
         approver = None
-        if saved_email:
+        # Bug 6 fix: Check DB for approver staff user AND verify role is approver or admin
+        for email in candidate_emails:
             u = conn.execute(
                 "select id, name, role, email from staff_users where lower(email) = lower(%s)",
-                (saved_email,),
+                (email,),
             ).fetchone()
-            if u:
+            if u and u["role"] in ("approver", "admin"):
                 approver = dict(u)
+                break
 
-        # Email na mile to reject karo, "System Approver" id 1 mat banao
         if not approver:
+            # Check if any candidate email exists in staff users with an unauthorized role
+            for email in candidate_emails:
+                u = conn.execute(
+                    "select id, name, role, email from staff_users where lower(email) = lower(%s)",
+                    (email,),
+                ).fetchone()
+                if u:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Staff user {u['email']} has role '{u['role']}'. Only approvers and admins are authorized to decide approvals.",
+                    )
+
             raise HTTPException(
-                status_code=400,
-                detail=f"Assigned approver ({saved_email or 'unknown'}) not found in staff users. Approval token cannot be processed.",
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No authorized approver (with approver or admin role) found for this approval link.",
             )
 
     return decide_approval(approval_id, body, approver)
